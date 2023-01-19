@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 )
 
-const VRM_API string = "https://vrmapi.victronenergy.com/v2"
+const VRM_API_HOST string = "https://vrmapi.victronenergy.com"
 
 type authorization struct {
 	Name string `json:"username"`
@@ -17,9 +18,9 @@ type authorization struct {
 }
 
 type resError struct {
-	Success   bool   `json:"success"`
-	Errors    string `json:"errors,omitempty"`
-	ErrorCode string `json:"error_code,omitempty"`
+	Success   bool        `json:"success"`
+	Errors    interface{} `json:"errors,omitempty"`
+	ErrorCode string      `json:"error_code,omitempty"`
 }
 
 type resLogin struct {
@@ -40,6 +41,10 @@ var (
 	logon  resLogin
 	access resAccessTokens
 )
+
+func urlVRM(path string, v ...any) *url.URL {
+	return &url.URL{Scheme: "https", Host: "vrmapi.victronenergy.com", Path: fmt.Sprintf("/v2"+path, v...)}
+}
 
 func SetAccount(name, pass string) {
 	user.Name, user.Pass = name, pass
@@ -107,7 +112,7 @@ func Connect() error {
 	if err != nil {
 		return err
 	}
-	response, err := http.Post(VRM_API+"/auth/login", "application/json", bytes.NewBuffer(buff))
+	response, err := http.Post(urlVRM("/auth/login").String(), "application/json", bytes.NewBuffer(buff))
 	if err != nil {
 		return err
 	}
@@ -125,9 +130,7 @@ func Connect() error {
 	}
 	resErr := resError{}
 	if err := json.Unmarshal(res, &resErr); err == nil {
-		if resErr.Success {
-			return fmt.Errorf("%s", resErr.Errors)
-		}
+		return fmt.Errorf("connect failed, %v", resErr.Errors)
 	}
 	return fmt.Errorf("connect failed, code %v", response.StatusCode)
 }
@@ -137,7 +140,7 @@ func Connect() error {
 //  from the server and can no longer be used for authentication purposes.
 // https://vrm-api-docs.victronenergy.com/#/operations/auth/logout
 func Close() error {
-	code, res, err := get(VRM_API + "/auth/logout")
+	code, res, err := get(urlVRM("/auth/logout").String())
 	if err != nil {
 		return err
 	}
@@ -149,11 +152,9 @@ func Close() error {
 	}
 	resErr := resError{}
 	if err := json.Unmarshal(res, &resErr); err == nil {
-		if resErr.Success {
-			return fmt.Errorf("%s", resErr.Errors)
-		}
+		return fmt.Errorf("close failed, %v", resErr.Errors)
 	}
-	return fmt.Errorf("connect failed, code %v", code)
+	return fmt.Errorf("close failed, code %v", code)
 }
 
 // CreateAccessTokens - Create an access token for a user.
@@ -171,7 +172,7 @@ func CreateAccessTokens(name string) error {
 		return err
 	}
 	body := bytes.NewReader(buff)
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/users/%d/accesstokens/create", VRM_API, logon.UserID), body)
+	req, err := http.NewRequest("POST", urlVRM("/users/%d/accesstokens/create", logon.UserID).String(), body)
 	if err != nil {
 		return err
 	}
@@ -195,15 +196,15 @@ func CreateAccessTokens(name string) error {
 	}
 	resErr := resError{}
 	if err := json.Unmarshal(res, &resErr); err == nil {
-		if resErr.Success {
-			return fmt.Errorf("%s", resErr.Errors)
-		}
+		return fmt.Errorf("create access tokens failed, %v", resErr.Errors)
 	}
-	return fmt.Errorf("connect failed, code %v", response.StatusCode)
+	return fmt.Errorf("create access tokens failed, code %v", response.StatusCode)
 }
 
-func Get(siteID, req string) ([]byte, error) {
-	code, res, err := get(fmt.Sprintf("%s/installations/%s%s", VRM_API, siteID, req))
+func Get(siteID, request, query string) ([]byte, error) {
+	u := urlVRM("/installations/%s/%s", siteID, request)
+	u.RawQuery = query
+	code, res, err := get(u.String())
 	if err != nil {
 		return res, err
 	}
@@ -212,11 +213,17 @@ func Get(siteID, req string) ([]byte, error) {
 	}
 	resErr := resError{}
 	if err := json.Unmarshal(res, &resErr); err == nil {
-		if resErr.Success {
-			return res, fmt.Errorf("%s", resErr.Errors)
-		}
+		return res, fmt.Errorf("get url failed, %v", resErr.Errors)
 	}
-	return res, fmt.Errorf("connect failed, code %v", code)
+	return res, fmt.Errorf("get url failed, code %v", code)
+}
+
+func GetObject(object any, siteID, request, query string) error {
+	res, err := Get(siteID, "stats", query)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(res, object)
 }
 
 func get(url string) (code int, response []byte, err error) {
@@ -246,48 +253,48 @@ func get(url string) (code int, response []byte, err error) {
 // https://vrm-api-docs.victronenergy.com
 func RequestsList() []string {
 	return []string{
-		"/system-overview",
-		"/diagnostics",
-		"/gps-download",
-		"/tags",
-		"/data-download",
-		"/stats",
-		"/overallstats",
-		"/widgets/Graph",
-		"/widgets/GPS",
-		"/widgets/HoursOfAc",
-		"/widgets/GeneratorState",
-		"/widgets/InputState",
-		"/widgets/InverterState",
-		"/widgets/MPPTState",
-		"/widgets/ChargerState",
-		"/widgets/EssBatteryLifeState",
-		"/widgets/FuelCellState",
-		"/widgets/BatteryExternalRelayState",
-		"/widgets/BatteryRelayState",
-		"/widgets/BatteryMonitorWarningsAndAlarms",
-		"/widgets/GatewayRelayState",
-		"/widgets/GatewayRelayTwoState",
-		"/widgets/ChargerRelayState",
-		"/widgets/SolarChargerRelayState",
-		"/widgets/VeBusState",
-		"/widgets/VeBusWarningsAndAlarms",
-		"/widgets/InverterChargerState",
-		"/widgets/InverterChargerWarningsAndAlarms",
-		"/widgets/BatterySummary",
-		"/widgets/BMSDiagnostics",
-		"/widgets/HistoricData",
-		"/widgets/IOExtenderInOut",
-		"/widgets/LithiumBMS",
-		"/widgets/DCMeter",
-		"/widgets/EvChargerSummary",
-		"/widgets/MeteorologicalSensor",
-		"/widgets/GlobalLinkSummary",
-		"/widgets/MotorSummary",
-		"/widgets/PVInverterStatus",
-		"/widgets/SolarChargerSummary",
-		"/widgets/Status",
-		"/widgets/TankSummary",
-		"/widgets/TempSummaryAndGraph",
+		"system-overview",
+		"diagnostics",
+		"gps-download",
+		"tags",
+		"data-download",
+		"stats",
+		"overallstats",
+		"widgets/Graph",
+		"widgets/GPS",
+		"widgets/HoursOfAc",
+		"widgets/GeneratorState",
+		"widgets/InputState",
+		"widgets/InverterState",
+		"widgets/MPPTState",
+		"widgets/ChargerState",
+		"widgets/EssBatteryLifeState",
+		"widgets/FuelCellState",
+		"widgets/BatteryExternalRelayState",
+		"widgets/BatteryRelayState",
+		"widgets/BatteryMonitorWarningsAndAlarms",
+		"widgets/GatewayRelayState",
+		"widgets/GatewayRelayTwoState",
+		"widgets/ChargerRelayState",
+		"widgets/SolarChargerRelayState",
+		"widgets/VeBusState",
+		"widgets/VeBusWarningsAndAlarms",
+		"widgets/InverterChargerState",
+		"widgets/InverterChargerWarningsAndAlarms",
+		"widgets/BatterySummary",
+		"widgets/BMSDiagnostics",
+		"widgets/HistoricData",
+		"widgets/IOExtenderInOut",
+		"widgets/LithiumBMS",
+		"widgets/DCMeter",
+		"widgets/EvChargerSummary",
+		"widgets/MeteorologicalSensor",
+		"widgets/GlobalLinkSummary",
+		"widgets/MotorSummary",
+		"widgets/PVInverterStatus",
+		"widgets/SolarChargerSummary",
+		"widgets/Status",
+		"widgets/TankSummary",
+		"widgets/TempSummaryAndGraph",
 	}
 }
