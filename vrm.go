@@ -11,6 +11,11 @@ import (
 
 const VRM_API string = "https://vrmapi.victronenergy.com/v2"
 
+type authorization struct {
+	Name string `json:"username"`
+	Pass string `json:"password"`
+}
+
 type resError struct {
 	Success   bool   `json:"success"`
 	Errors    string `json:"errors,omitempty"`
@@ -30,61 +35,66 @@ type resAccessTokens struct {
 	TokenID string `json:"idAccessToken"`
 }
 
-func NewClient(user, pass string) *Client {
-	return &Client{User: user, Password: pass}
+var (
+	user   authorization
+	logon  resLogin
+	access resAccessTokens
+)
+
+func SetAccount(name, pass string) {
+	user.Name, user.Pass = name, pass
 }
 
-type Client struct {
-	User     string `json:"username"`
-	Password string `json:"password"`
-	logon    resLogin
-	access   resAccessTokens
+func SetLogon(token string, userID int64) {
+	logon.Token, logon.UserID = token, userID
 }
 
-func (client *Client) SetAccount(user, pass string) {
-	client.User, client.Password = user, pass
+func SetAccess(token, tokenID string) {
+	access.Token, access.TokenID = token, tokenID
 }
 
-func (client *Client) SetLogon(token string, userID int64) {
-	client.logon.Token, client.logon.UserID = token, userID
+func GetToken() string {
+	return logon.Token
 }
 
-func (client *Client) SetAccess(token, tokenID string) {
-	client.access.Token, client.access.TokenID = token, tokenID
+func GetUserID() int64 {
+	return logon.UserID
 }
 
-func (client *Client) GetToken() string {
-	return client.logon.Token
+func GetVerificationMode() string {
+	return logon.VerificationMode
 }
 
-func (client *Client) GetUserID() int64 {
-	return client.logon.UserID
+func GetVerificationSent() bool {
+	return logon.VerificationSent
 }
 
-func (client *Client) GetVerificationMode() string {
-	return client.logon.VerificationMode
+func GetAccessToken() string {
+	return access.Token
 }
 
-func (client *Client) GetVerificationSent() bool {
-	return client.logon.VerificationSent
+func GetAccessTokenID() string {
+	return access.TokenID
 }
 
-func (client *Client) GetAccessToken() string {
-	return client.access.Token
-}
-
-func (client *Client) GetAccessTokenID() string {
-	return client.access.TokenID
-}
-
-func (client *Client) GetLogonJson() string {
-	res, _ := json.MarshalIndent(client.logon, "", "\t")
+func GetLogonJson() string {
+	res, _ := json.MarshalIndent(logon, "", "\t")
 	return string(res)
 }
 
-func (client *Client) GetAccessJson() string {
-	res, _ := json.MarshalIndent(client.access, "", "\t")
+func GetAccessJson() string {
+	res, _ := json.MarshalIndent(access, "", "\t")
 	return string(res)
+}
+
+// NewConnect - log in using an e-mail and password
+//  Used to authenticate as a user to access authenticated routes.
+//  2FA token must be included if 2FA is enabled on the account.
+//  Returns a bearer token (JWT).
+// https://vrm-api-docs.victronenergy.com/#/operations/auth/login
+func NewConnect(name, pass string) error {
+	user.Name, user.Pass = name, pass
+	return Connect()
 }
 
 // Connect - log in using an e-mail and password
@@ -92,8 +102,8 @@ func (client *Client) GetAccessJson() string {
 //  2FA token must be included if 2FA is enabled on the account.
 //  Returns a bearer token (JWT).
 // https://vrm-api-docs.victronenergy.com/#/operations/auth/login
-func (client *Client) Connect() error {
-	buff, err := json.Marshal(client)
+func Connect() error {
+	buff, err := json.Marshal(user)
 	if err != nil {
 		return err
 	}
@@ -108,7 +118,7 @@ func (client *Client) Connect() error {
 		return err
 	}
 	if response.StatusCode == 200 {
-		if err := json.Unmarshal(res, &client.logon); err != nil {
+		if err := json.Unmarshal(res, &logon); err != nil {
 			return err
 		}
 		return nil
@@ -126,8 +136,8 @@ func (client *Client) Connect() error {
 //  Used to log out a user. The token provided in the authorization header will be blacklisted
 //  from the server and can no longer be used for authentication purposes.
 // https://vrm-api-docs.victronenergy.com/#/operations/auth/logout
-func (client *Client) Close() error {
-	code, res, err := client.get(VRM_API + "/auth/logout")
+func Close() error {
+	code, res, err := get(VRM_API + "/auth/logout")
 	if err != nil {
 		return err
 	}
@@ -151,7 +161,7 @@ func (client *Client) Close() error {
 //  These tokens can be used as an alternative way of authentication against the VRM API.
 //  The token is returned, after which it is not possible to ever retrieve it again.
 // https://vrm-api-docs.victronenergy.com/#/operations/users/idUser/accesstokens/create
-func (client *Client) CreateAccessTokens(name string) error {
+func CreateAccessTokens(name string) error {
 	type Data struct {
 		Name string `json:"name"`
 	}
@@ -161,12 +171,12 @@ func (client *Client) CreateAccessTokens(name string) error {
 		return err
 	}
 	body := bytes.NewReader(buff)
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/users/%d/accesstokens/create", VRM_API, client.logon.UserID), body)
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/users/%d/accesstokens/create", VRM_API, logon.UserID), body)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Authorization", "Bearer "+client.logon.Token)
+	req.Header.Set("X-Authorization", "Bearer "+logon.Token)
 	response, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
@@ -178,7 +188,7 @@ func (client *Client) CreateAccessTokens(name string) error {
 		return err
 	}
 	if response.StatusCode == 200 {
-		if err := json.Unmarshal(res, &client.access); err != nil {
+		if err := json.Unmarshal(res, &access); err != nil {
 			return err
 		}
 		return nil
@@ -192,10 +202,49 @@ func (client *Client) CreateAccessTokens(name string) error {
 	return fmt.Errorf("connect failed, code %v", response.StatusCode)
 }
 
+func Get(siteID, req string) ([]byte, error) {
+	code, res, err := get(fmt.Sprintf("%s/installations/%s%s", VRM_API, siteID, req))
+	if err != nil {
+		return res, err
+	}
+	if code == 200 {
+		return res, err
+	}
+	resErr := resError{}
+	if err := json.Unmarshal(res, &resErr); err == nil {
+		if resErr.Success {
+			return res, fmt.Errorf("%s", resErr.Errors)
+		}
+	}
+	return res, fmt.Errorf("connect failed, code %v", code)
+}
+
+func get(url string) (code int, response []byte, err error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if access.Token != "" {
+		req.Header.Set("X-Authorization", "Token "+access.Token)
+	} else {
+		req.Header.Set("X-Authorization", "Bearer "+logon.Token)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer res.Body.Close()
+	res.Close = true
+	code = res.StatusCode
+	response, err = ioutil.ReadAll(res.Body)
+	return
+}
+
 // RequestList - return requests list
 //
 // https://vrm-api-docs.victronenergy.com
-func (client *Client) RequestsList() []string {
+func RequestsList() []string {
 	return []string{
 		"/system-overview",
 		"/diagnostics",
@@ -241,43 +290,4 @@ func (client *Client) RequestsList() []string {
 		"/widgets/TankSummary",
 		"/widgets/TempSummaryAndGraph",
 	}
-}
-
-func (client *Client) Get(siteID, req string) ([]byte, error) {
-	code, res, err := client.get(fmt.Sprintf("%s/installations/%s%s", VRM_API, siteID, req))
-	if err != nil {
-		return res, err
-	}
-	if code == 200 {
-		return res, err
-	}
-	resErr := resError{}
-	if err := json.Unmarshal(res, &resErr); err == nil {
-		if resErr.Success {
-			return res, fmt.Errorf("%s", resErr.Errors)
-		}
-	}
-	return res, fmt.Errorf("connect failed, code %v", code)
-}
-
-func (client *Client) get(url string) (code int, response []byte, err error) {
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return 0, nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if client.access.Token != "" {
-		req.Header.Set("X-Authorization", "Token "+client.access.Token)
-	} else {
-		req.Header.Set("X-Authorization", "Bearer "+client.logon.Token)
-	}
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer res.Body.Close()
-	res.Close = true
-	code = res.StatusCode
-	response, err = ioutil.ReadAll(res.Body)
-	return
 }
